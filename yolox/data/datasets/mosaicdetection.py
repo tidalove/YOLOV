@@ -14,7 +14,6 @@ from ..data_augment import box_candidates, random_perspective
 from .datasets_wrapper import Dataset
 import os
 
-
 def get_mosaic_coordinate(mosaic_image, mosaic_index, xc, yc, w, h, input_h, input_w):
     # TODO update doc
     # index0 to top left part of image
@@ -281,21 +280,54 @@ class MosaicDetection_VID(Dataset):
     def __len__(self):
         return len(self._dataset)
 
-    def get_mosic_idx(self,path):
-        path = os.path.join(self.dataset_pth,path)
-        path_dir = path[:path.rfind('/')+1]
-        anno_path = path_dir.replace("Data","Annotations")
-        frame_num = len(os.listdir(anno_path))
+    def get_mosic_idx(self, path):
+        """Get mosaic indices by randomly sampling from the same video directory.
+
+        This works for both ImageNet VID (numeric filenames) and custom datasets
+        (descriptive filenames) by listing actual files in the directory.
+        """
+        full_path = os.path.join(self.dataset_path, path)
+        path_dir = full_path[:full_path.rfind('/') + 1]
+        anno_path = path_dir.replace("Data", "Annotations")
+
+        try:
+            # Get all annotation files in the directory
+            all_xml_files = sorted([f for f in os.listdir(anno_path)
+                                   if f.endswith('.xml') or f.endswith('.XML')])
+            frame_num = len(all_xml_files)
+
+            if frame_num == 0:
+                # No files found, return original path 4 times
+                return [path] * 4
+
+        except (FileNotFoundError, OSError):
+            # Directory doesn't exist or can't be read, return original path 4 times
+            return [path] * 4
+
         self.file_num = frame_num
-        #print(frame_num)
-        rand_idx = [random.randint(0,frame_num-1) for _ in range(3)]
-        raw = '000000'
-        res = []
-        res.append(path)
-        for idx in rand_idx:
-            str_idx = str(idx)
-            frame_idx = path_dir + raw[0:-len(str_idx)] + str_idx + '.JPEG'
-            res.append(frame_idx)
+
+        # Randomly select 3 other frames from the same directory
+        rand_indices = [random.randint(0, frame_num - 1) for _ in range(3)]
+
+        res = [path]  # Include the original path
+        for idx in rand_indices:
+            # Get actual filename from directory listing (it's an .xml file)
+            selected_xml = all_xml_files[idx]
+            # Convert from .xml to image extension (.jpg, .JPEG, etc.)
+            # Try common image extensions
+            for img_ext in ['.jpg', '.JPEG', '.png', '.JPG']:
+                image_file = selected_xml.replace('.xml', img_ext).replace('.XML', img_ext)
+                data_path = os.path.join(path_dir, image_file)
+                if os.path.exists(data_path):
+                    # Found the image file, use it
+                    # Convert back to relative path
+                    rel_path = data_path.replace(self.dataset_path + '/', '')
+                    res.append(rel_path)
+                    break
+            else:
+                # No matching image found, just append the original path
+                res.append(path)
+
         return res
 
     #@Dataset.mosaic_getitem
@@ -382,26 +414,21 @@ class MosaicDetection_VID(Dataset):
             return img, label, img_info, idx#np.array([idx])
 
     def get_mixup_idx(self,path):
-        path = os.path.join(self.dataset_pth,path)
+        path = os.path.join(self.dataset_path,path)
         path_dir = path[:path.rfind('/')+1]
         frame_num = self.file_num
         rand_idx = random.randint(0,frame_num-1)
-        str_idx = str(rand_idx)
-        raw = '000000'
-        frame_idx = path_dir + raw[0:-len(str_idx)] + str_idx + '.JPEG'
-        return frame_idx
+        all_files = os.listdir(path_dir)
+        full_path = os.path.join(path_dir, all_files[rand_idx])
+        return full_path
 
-    def mixup(self, origin_img, origin_labels, input_dim,path):
+    def mixup(self, origin_img, origin_labels, input_dim, path):
         jit_factor = random.uniform(*self.mixup_scale)
         FLIP = random.uniform(0, 1) > 0.5
         cp_labels = []
 
-        # while len(cp_labels) == 0:
-        #     cp_index = random.randint(0, self.__len__() - 1)
-        #     cp_labels = self._dataset.load_anno(cp_index)
-
-        cp_index = self.get_mixup_idx(path)
-        img, cp_labels, _, _ = self._dataset.pull_item(cp_index)
+        mixup_path = self.get_mixup_idx(path)
+        img, cp_labels, _, _ = self._dataset.pull_item(mixup_path)
 
         if len(img.shape) == 3:
             cp_img = np.ones((input_dim[0], input_dim[1], 3), dtype=np.uint8) * 114

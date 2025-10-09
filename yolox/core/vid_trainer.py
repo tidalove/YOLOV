@@ -26,6 +26,7 @@ from yolox.utils import (
     is_parallel,
     load_ckpt,
     occupy_mem,
+    plot_images,
     save_checkpoint,
     setup_logger,
     synchronize
@@ -39,8 +40,8 @@ def fix_bn(m):
         m.eval()
 
 def extract_values(text):
-    AP75 = re.search(r'Average Precision  \(AP\) @\[ IoU=0.75.*? \] = (\d+\.\d+)', text).group(1)
     try:
+        AP75 = re.search(r'Average Precision  \(AP\) @\[ IoU=0.75.*? \] = (\d+\.\d+)', text).group(1)
         AP_small = re.search(r'Average Precision  \(AP\) @\[ IoU=0.50:0.95 \| area= small.*? \] = (\d+\.\d+)', text).group(1)
         AP_medium = re.search(r'Average Precision  \(AP\) @\[ IoU=0.50:0.95 \| area=medium.*? \] = (\d+\.\d+)', text).group(1)
         AP_large = re.search(r'Average Precision  \(AP\) @\[ IoU=0.50:0.95 \| area= large.*? \] = (\d+\.\d+)', text).group(1)
@@ -51,6 +52,7 @@ def extract_values(text):
         AR_medium = re.search(r'Average Recall     \(AR\) @\[ IoU=0.50:0.95 \| area=medium.*? \] = (\d+\.\d+)', text).group(1)
         AR_large = re.search(r'Average Recall     \(AR\) @\[ IoU=0.50:0.95 \| area= large.*? \] = (\d+\.\d+)', text).group(1)
     except Exception:
+        AP75 = 0
         AP_small = 0
         AP_medium = 0
         AP_large = 0
@@ -140,18 +142,24 @@ class Trainer:
     def train_one_iter(self):
         iter_start_time = time.time()
 
-        inps, targets,_ = self.prefetcher.next()
+        inps, targets,paths,_ = self.prefetcher.next()
         inps = inps.to(self.data_type)
         targets = targets.to(self.data_type)
         targets.requires_grad = False
         inps, targets = self.exp.preprocess(inps, targets, self.input_size,
                                             )
+        
+        if self.epoch == 0:
+            if self.iter < 3:
+                plot_images(inps, targets, paths, fname=f"train_batch{self.iter}.jpg")
+        
         data_end_time = time.time()
 
         with torch.cuda.amp.autocast(enabled=self.amp_training):
             outputs = self.model(inps, targets, lframe = self.exp.lframe,gframe = self.exp.gframe)
 
         loss = outputs["total_loss"]
+        self.tblogger.add_scalar("train/loss", loss, self.iter + 1)
 
         self.optimizer.zero_grad()
         self.scaler.scale(loss).backward()
@@ -357,7 +365,7 @@ class Trainer:
             if self.args.ckpt is not None:
                 logger.info("loading checkpoint for fine tuning")
                 ckpt_file = self.args.ckpt
-                ckpt = torch.load(ckpt_file, map_location=self.device)["model"]
+                ckpt = torch.load(ckpt_file, map_location=self.device, weights_only=False)["model"]
                 model = load_ckpt(model, ckpt)
             self.start_epoch = 0
 

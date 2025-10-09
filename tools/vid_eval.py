@@ -126,7 +126,7 @@ def main(exp, args):
     lframe = int(args.lframe)
     gframe = int(args.gframe)
 
-    dataset_val = vid.VIDDataset(file_path='./yolox/data/datasets/val_seq.npy',
+    dataset_val = vid.VIDDataset(file_path=exp.vid_val_path, #'./yolox/data/datasets/val_seq.npy',
                                  img_size=(args.tsize, args.tsize), preproc=Vid_Val_Transform(), lframe=lframe,
                                  gframe=gframe, val=True,mode=args.mode,dataset_pth=exp.data_dir,tnum=int(args.tnum),
                                  formal=args.formal,local_stride=exp.local_stride,)

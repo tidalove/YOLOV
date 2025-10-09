@@ -149,7 +149,7 @@ class VIDDataset(torchDataset):
 
 
     def get_annotation(self,path,test_size):
-        path = path.replace("Data","Annotations").replace("JPEG","xml")
+        path = path.replace("Data","Annotations").replace("JPEG","xml").replace("jpg", "xml")
         if os.path.isdir(path):
             files = get_xml_list(path)
         else:
@@ -221,7 +221,6 @@ class VIDDataset(torchDataset):
         return img, annos, img_info, path
 
     def __getitem__(self, path):
-
         img, target, img_info, path = self.pull_item(path)
         if self.preproc is not None:
             img, target = self.preproc(img, target, self.input_dim)
@@ -748,11 +747,12 @@ class DataPrefetcher:
 
     def preload(self):
         try:
-            self.next_input, self.next_target,_,_,_,self.time_ebdding = next(self.loader)
+            self.next_input, self.next_target,_,_,self.path,self.time_ebdding = next(self.loader)
         except StopIteration:
             self.next_input = None
             self.next_target = None
             self.time_ebdding = None
+            self.path = None
             return
 
         with torch.cuda.stream(self.stream):
@@ -764,12 +764,13 @@ class DataPrefetcher:
         input = self.next_input
         target = self.next_target
         time_ebdding = self.time_ebdding
+        paths = self.path
         if input is not None:
             self.record_stream(input)
         if target is not None:
             target.record_stream(torch.cuda.current_stream())
         self.preload()
-        return input, target,time_ebdding
+        return input, target, paths, time_ebdding
 
     def _input_cuda_for_image(self):
         self.next_input = self.next_input.cuda(non_blocking=True)

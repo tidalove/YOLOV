@@ -18,7 +18,7 @@ class Exp(MyExp):
         # Define yourself dataset path
 
         self.num_classes = 30
-        self.data_dir = "/mnt/weka/scratch/yuheng.shi/dataset/VID"
+        self.data_dir = "/data/vision/beery/scratch/kai/ImageNet/ImageNet/data/ImageNet2015/object_detection_from_video"
         self.train_ann = "vid_train_coco.json"
         self.val_ann = "vid_val10000_coco.json"
         self.max_epoch = 20

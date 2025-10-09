@@ -136,7 +136,7 @@ class Exp(BaseExp):
         # You can uncomment this line to specify a multiscale range
         # self.random_size = (14, 26)
         # dir of dataset images, if data_dir is None, this project will use `datasets` dir
-        self.data_dir = '/mnt/weka/scratch/yuheng.shi/dataset/VID'
+        self.data_dir = "/data/vision/beery/scratch/kai/ImageNet/ImageNet/data/ImageNet2015/object_detection_from_video/"
         # name of annotation file for training
         self.vid_train_path = './yolox/data/datasets/train_seq.npy'
         self.vid_val_path = './yolox/data/datasets/val_seq.npy'
@@ -170,6 +170,7 @@ class Exp(BaseExp):
         self.max_epoch = 7
         # minimum learning rate during warmup
         self.warmup_lr = 0
+        self.pre_no_aug = 0
         self.min_lr_ratio = 0.1
         # learning rate for one image. During training, lr will multiply batchsize.
         self.basic_lr_per_img = 0.002 / 64.0
