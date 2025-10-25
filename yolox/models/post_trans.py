@@ -602,15 +602,168 @@ class MSA_yolov_online(nn.Module):
             return lout,out
         return out,out
 
+class NextFramePrediction(nn.Module):
+    def __init__(self,dim,heads,bias=False,attn_drop=0., blocks=1,**kwargs):
+        super().__init__()
+        self.blocks = blocks
+        self.transBlocks = nn.ModuleList()
+        for i in range(blocks):
+            self.transBlocks.append(MaskedTransformerBlock(dim,heads,qkv_bias=bias,attn_drop=attn_drop,**kwargs))
+    def forward(self,x,x_reg,locs=None,**kwargs):
+        for i in range(self.blocks):
+            x,x_reg = self.transBlocks[i](x,x_reg,locs,**kwargs)
+        return x,x_reg
+
+
+class MaskedTransformerBlock(nn.Module):
+    def __init__(self, dim, num_heads, mlp_ratio=4.,
+                 qkv_bias=False, dropout=0., attn_drop=0., drop_path=0.,**kwargs):
+        super().__init__()
+        self.cross_attn = kwargs.get('cross_attn', False) # TODO: ablate
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn1 = MaskedAttentionLocal(dim, num_heads=num_heads, bias=qkv_bias, attn_drop=attn_drop, **kwargs)
+        self.attn2 = MaskedAttentionLocal(dim, num_heads=num_heads, bias=qkv_bias, attn_drop=attn_drop, **kwargs)
+        self.attn3 = MaskedAttentionLocal(dim, num_heads=num_heads, bias=qkv_bias, attn_drop=attn_drop, **kwargs)
+        self.drop_path = nn.Identity()
+        self.use_ffn = kwargs.get('use_ffn', True)
+        self.reconf = kwargs.get('reconf', False)
+        self.norm3 = nn.LayerNorm(dim)
+        if self.use_ffn:
+            self.norm2 = nn.LayerNorm(dim)
+            self.mlp1 = FFN(dim, int(dim * mlp_ratio), dropout=dropout)
+            self.mlp2 = FFN(dim, int(dim * mlp_ratio), dropout=dropout)
+            self.norm4 = nn.LayerNorm(dim)
+        if self.cross_attn:
+            self.norm5 = nn.LayerNorm(dim)
+            self.norm6 = nn.LayerNorm(dim)
+    def forward(self, x_cls, x_reg, locs,**kwargs):
+
+        x_cls_norm = self.norm1(x_cls) # LayerNorm on cls features
+        x_reg_norm = self.norm3(x_reg) # LayerNorm on reg features
+
+        x_cls = x_cls + self.attn1(x_cls_norm, x_cls_norm, x_cls_norm, locs, **kwargs) # self-attention on cls features
+        x_reg = x_reg + self.attn2(x_reg_norm, x_reg_norm, x_reg_norm, locs, **kwargs) # self-attention on reg features
+        
+        if self.cross_attn:
+            x_reg_ = self.norm5(x_reg)
+            x_cls_ = self.norm6(x_cls)
+            x_reg = x_reg + self.attn3(x_cls_, x_reg_, x_reg_, locs, **kwargs) # cross-attention between cls, reg
+
+        if self.use_ffn:
+            x_cls = x_cls + self.mlp1(self.norm2(x_cls))
+            x_reg = x_reg + self.mlp2(self.norm4(x_reg))
+        
+        return x_cls, x_reg
 
 
 
+class MaskedAttentionLocal(nn.Module):
+    def __init__(self, dim, num_heads=8, bias=False, attn_drop=0.,**kwargs):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+        self.use_time_emd = kwargs.get('use_time_emd', True)
+        self.use_loc_emb = kwargs.get('use_loc_emd', True)
+        self.loc_fuse_type = kwargs.get('loc_fuse_type', 'add')
+        self.use_qkv = kwargs.get('use_qkv', True)
+        self.locf_dim = kwargs.get('locf_dim', 64)
+        self.loc_emd_dim = kwargs.get('loc_emd_dim', 64)
+        self.pure_pos_emb = kwargs.get('pure_pos_emb', False)
+        self.loc_conf = kwargs.get('loc_conf', False)
+        self.iou_base = kwargs.get('iou_base', False)
+        self.iou_thr = kwargs.get('iou_thr', 0.5)
+        self.reconf =  kwargs.get('reconf', False)
+        self.iou_window = kwargs.get('iou_window', 0)
 
+        self.q = nn.Linear(dim, dim, bias=bias)
+        self.k = nn.Linear(dim, dim, bias=bias)
+        self.v = nn.Linear(dim, dim, bias=bias)
 
+        if self.use_loc_emb:
+            if self.pure_pos_emb:
+                self.loc2feature = nn.Linear(4, dim, bias=False)
+                self.loc_fuse_type = 'identity'
+            else:
+                self.loc2feature = nn.Conv2d(self.locf_dim, self.num_heads,kernel_size=1,stride=1,padding=0)
+                #init the loc2feature
+                trunc_normal_(self.loc2feature.weight, std=0.01)
+                nn.init.constant_(self.loc2feature.bias, 0)
+                self.locAct = nn.ReLU(inplace=True)
+        self.attn_drop = nn.Dropout(attn_drop)
 
+    def forward(self, x_q, x_k, x_v, locs, **kwargs):
+        B, N, C = x_q.shape
+        L,G,P = kwargs.get('lframe'),kwargs.get('gframe'),kwargs.get('afternum')
 
+        assert B == 1 , 'only support video batch size 1 currently'
+        if locs!=None:
+            LF, P= locs.shape[0], locs.shape[1]  # num frames, num predictions per frame
+            locs = locs.view(-1, 4)
 
+        if self.use_loc_emb and not self.pure_pos_emb:
+            loc_emd = get_position_embedding(locs,locs,feat_dim=self.loc_emd_dim).type_as(x_q) #1, 64, N, N
+            if self.use_time_emd:
+                time_emd = get_timing_signal_1d(torch.arange(0,LF), self.locf_dim).type_as(x_q) #LF, 64
+                time_emd = time_emd.unsqueeze(1).repeat(P, N, 1).permute(2, 0, 1).unsqueeze(0) #1, 64, N, N
+                loc_time_emb = loc_emd + time_emd
+            else:
+                loc_time_emb = loc_emd
+            attn_lt = self.locAct(self.loc2feature(loc_time_emb))
+            fg_score = kwargs.get('fg_score', None)
+            if self.loc_conf and fg_score is not None:
+                fg_score = fg_score>0.001
+                fg_score = fg_score.view(1,-1).unsqueeze(0).unsqueeze(0).repeat(1, self.num_heads, N, 1)
+                fg_score = fg_score.type_as(x_q)
+                attn_lt = attn_lt * fg_score
+        elif self.pure_pos_emb:
+            pure_loc_features = pure_position_embedding(locs,kwargs.get('width'),kwargs.get('height')).type_as(x_q)
+            pure_loc_features = self.loc2feature(pure_loc_features)#B*N,C
+            pure_loc_features = pure_loc_features.view(B, N, C)
+            if self.use_time_emd:
+                time_emd = get_timing_signal_1d(torch.arange(0, LF), C).type_as(x_q)  # LF, C
+                time_emd = time_emd.unsqueeze(0).repeat(B, P, 1)  # B, N, C
+                pure_loc_features = pure_loc_features + time_emd
+            x_q = x_q + pure_loc_features.reshape(B,N,-1)
+            x_k = x_k + pure_loc_features.reshape(B,N,-1)
+            x_v = x_v + pure_loc_features.reshape(B,N,-1)
 
+        q = self.q(x_q).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3) # B, num_heads, N, C
+        k = self.k(x_k).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3) # B, num_heads, N, C
+        v = self.v(x_v).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3) # B, num_heads, N, C
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale #B, num_heads, M, N
+        cls_score = kwargs.get('cls_score', None)
+        if self.loc_conf and cls_score is not None:
+            cls_score = cls_score.view(1,-1).unsqueeze(0).unsqueeze(0).repeat(1, self.num_heads, N, 1)
+            cls_score = cls_score.type_as(attn)
+            attn = attn * cls_score
+
+        if self.loc_fuse_type == 'add' and not self.iou_base:
+            attn = attn + (attn_lt+1e-6).log()
+        elif self.loc_fuse_type == 'dot' and not self.iou_base:
+            attn = attn * (attn_lt+1e-6).log()
+        elif self.loc_fuse_type == 'identity' or self.iou_base:
+            attn = attn
+        else:
+            raise NotImplementedError
+
+        # Create strictly lower triangular mask (diagonal=-1) so each frame only sees past frames, not itself
+        lower_tri = torch.tril(torch.ones(LF, LF), diagonal=-1)
+        # Create P x P block of ones
+        block = torch.ones(P, P)
+        # Use Kronecker product to expand each element into a P x P block
+        mask = torch.kron(lower_tri, block)
+        # Convert for use as pre-softmax mask: 1s -> 0s, 0s -> -inf
+        mask = torch.where(mask == 1, torch.tensor(0.0), torch.tensor(float('-inf'))).type_as(attn)
+
+        attn = attn + mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+
+        return x
 
 
 

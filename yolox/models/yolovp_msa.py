@@ -12,7 +12,7 @@ import torchvision
 from loguru import logger
 
 from yolox.models.post_process import postprocess,get_linking_mat
-from yolox.models.post_trans import MSA_yolov, LocalAggregation
+from yolox.models.post_trans import MSA_yolov, LocalAggregation, NextFramePrediction
 from yolox.utils import bboxes_iou
 from yolox.utils.box_op import box_cxcywh_to_xyxy, generalized_box_iou
 from .losses import IOUloss
@@ -41,6 +41,7 @@ class YOLOXHead(nn.Module):
             gmode=True,
             lmode=False,
             both_mode=False,
+            pred_mode=False,
             localBlocks=1,
             **kwargs
     ):
@@ -62,6 +63,7 @@ class YOLOXHead(nn.Module):
         self.gmode = gmode
         self.lmode = lmode
         self.both_mode = both_mode
+        self.pred_mode = pred_mode
 
         self.cls_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
@@ -93,6 +95,16 @@ class YOLOXHead(nn.Module):
 
         if both_mode:
             self.g2l = nn.Linear(int(4 * self.width), self.width)
+        
+        if pred_mode:
+            self.NextFramePrediction = NextFramePrediction(dim=self.width, heads=heads, attn_drop=drop, blocks=localBlocks,
+                                                           **kwargs)
+            # pred_mode requires linear prediction head
+            if not hasattr(self, 'linear_pred'):
+                self.linear_pred = nn.Linear(self.width, num_classes + 1)
+            # pred_mode requires reconf, so conf_pred is needed
+            if kwargs.get('reconf', False) and not hasattr(self, 'conf_pred'):
+                self.conf_pred = nn.Linear(int(self.width), 1)
         self.stems = nn.ModuleList()
         self.kwargs = kwargs
         Conv = DWConv if depthwise else BaseConv
@@ -345,7 +357,20 @@ class YOLOXHead(nn.Module):
             if self.both_mode:
                 outputs = [o[:lframe] for o in outputs]
                 pred_idx = pred_idx[:lframe]
-                pred_result = pred_result[:lframe]
+                pred_result = pred_result[:lframe]            
+        if self.pred_mode:
+            more_args = {'width': imgs.shape[-1], 'height': imgs.shape[-2], 'fg_score': fg_scores,
+                         'cls_score': cls_scores,'all_scores':all_scores,'lframe':lframe,
+                         'afternum':self.Afternum,'gframe':gframe,'use_score':self.use_score}
+            features_cls, features_reg = self.NextFramePrediction(features_cls[:, :lframe * self.Afternum],
+                                                                features_reg[:, :lframe * self.Afternum],
+                                                                locs[:lframe * self.Afternum].view(-1, self.Afternum, 4),
+                                                                **more_args)
+            # Zero gradients for first frame during training (frame 0 has no past frames to learn from)
+            if self.training and lframe > 0:
+                features_cls[:, :self.Afternum] = features_cls[:, :self.Afternum].detach()
+                features_reg[:, :self.Afternum] = features_reg[:, :self.Afternum].detach()
+        
         fc_output = self.linear_pred(features_cls)
         fc_output = torch.reshape(fc_output, [-1, self.Afternum, self.num_classes + 1])[:, :, :-1] # [b,afternum,cls]
 

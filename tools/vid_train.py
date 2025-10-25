@@ -110,7 +110,7 @@ def main(exp, args):
     cudnn.benchmark = True
     lframe = int(exp.lframe_val)
     gframe = int(exp.gframe_val)
-    val_loader = exp.get_eval_loader(batch_size=lframe+gframe,data_num_workers=6)
+    val_loader = exp.get_eval_loader(batch_size=lframe+gframe,data_num_workers=4)
     trainer = Trainer(exp, args,val_loader,val=False)
     trainer.train()
 
@@ -120,13 +120,13 @@ if __name__ == "__main__":
     exp = get_exp(args.exp_file, args.name)
 
     exp.merge(args.opts)
-    exp.test_size = (args.tsize, args.tsize)
+    exp.test_size = (args.tsize, args.tsize) if exp.test_size is None else exp.test_size
     if not args.experiment_name:
         args.experiment_name = exp.exp_name
 
     num_gpu = get_num_devices() if args.devices is None else args.devices
     assert num_gpu <= get_num_devices()
-    args.machine_rank = 1
+    args.machine_rank = 0
     dist_url = "auto" if args.dist_url is None else args.dist_url
     launch(
         main,

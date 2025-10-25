@@ -80,7 +80,7 @@ class VIDDataset(torchDataset):
         '''
         res = []
         dataset = np.load(dataset_path,allow_pickle=True).tolist()
-        for element in dataset:
+        for element in dataset: # element = one video sequence
             ele_len = len(element)
             if ele_len<lframe+gframe:
                 #TODO fix the unsolved part
@@ -149,7 +149,7 @@ class VIDDataset(torchDataset):
 
 
     def get_annotation(self,path,test_size):
-        path = path.replace("Data","Annotations").replace("JPEG","xml").replace("jpg", "xml")
+        path = path.replace("Data","Annotations").replace("JPEG","xml").replace("jpg", "xml").replace("PNG", "xml").replace("png", "xml")
         if os.path.isdir(path):
             files = get_xml_list(path)
         else:
@@ -755,12 +755,14 @@ class DataPrefetcher:
             self.path = None
             return
 
-        with torch.cuda.stream(self.stream):
-            self.input_cuda()
-            self.next_target = self.next_target.cuda(non_blocking=True)
+        # Disable CUDA streams to prevent NCCL deadlock in multi-GPU training
+        # with torch.cuda.stream(self.stream):
+        self.input_cuda()
+        self.next_target = self.next_target.cuda(non_blocking=True)
 
     def next(self):
-        torch.cuda.current_stream().wait_stream(self.stream)
+        # Disable stream synchronization to prevent NCCL deadlock
+        # torch.cuda.current_stream().wait_stream(self.stream)
         input = self.next_input
         target = self.next_target
         time_ebdding = self.time_ebdding

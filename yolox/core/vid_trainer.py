@@ -151,7 +151,7 @@ class Trainer:
         
         if self.epoch == 0:
             if self.iter < 3:
-                plot_images(inps, targets, paths, fname=f"train_batch{self.iter}.jpg")
+                plot_images(inps, targets, paths, fname=f"{self.file_name}/train_batch_{self.iter}.jpg")
         
         data_end_time = time.time()
 

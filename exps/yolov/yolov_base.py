@@ -68,6 +68,8 @@ class Exp(BaseExp):
         self.lmode = False
         # both local and global feature fusion
         self.both_mode = False
+        # predict-next-frame mode: use strictly causal masking for temporal aggregation
+        self.pred_mode = False
         #lframe for training
         self.lframe = 0
         #lframe for validation
@@ -272,6 +274,10 @@ class Exp(BaseExp):
 
         for layer in backbone.parameters():
             layer.requires_grad = False  # fix the backbone
+        # Automatically enable reconf when pred_mode is on (both features_cls and features_reg need to be refined)
+        if self.pred_mode:
+            self.reconf = True
+
         more_args = {'use_ffn': self.use_ffn, 'use_time_emd': self.use_time_emd, 'use_loc_emd': self.use_loc_emd,
                      'loc_fuse_type': self.loc_fuse_type, 'use_qkv': self.use_qkv,
                      'local_mask': self.local_mask, 'local_mask_branch': self.local_mask_branch,
@@ -284,7 +290,7 @@ class Exp(BaseExp):
                          use_score=self.use_score, defualt_p=self.defualt_p, sim_thresh=self.sim_thresh,
                          pre_nms=self.pre_nms, ave=self.ave, defulat_pre=self.defualt_pre, test_conf=self.test_conf,
                          use_mask=self.use_mask,gmode=self.gmode,lmode=self.lmode,both_mode=self.both_mode,
-                         localBlocks = self.localBlocks,**more_args)
+                         pred_mode=self.pred_mode, localBlocks = self.localBlocks,**more_args)
 
         for layer in head.stems.parameters():
             layer.requires_grad = False  # set stem fixed
