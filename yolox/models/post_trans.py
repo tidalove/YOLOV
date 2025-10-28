@@ -13,6 +13,7 @@ from yolox.utils import bboxes_iou
 from yolox.data.datasets.vid import get_timing_signal_1d
 from yolox.models.post_process import get_linking_mat
 import time
+from loguru import logger
 def visual_attention(data):
     data = data.cpu()
     data = data.detach().numpy()
@@ -623,7 +624,6 @@ class MaskedTransformerBlock(nn.Module):
         self.norm1 = nn.LayerNorm(dim)
         self.attn1 = MaskedAttentionLocal(dim, num_heads=num_heads, bias=qkv_bias, attn_drop=attn_drop, **kwargs)
         self.attn2 = MaskedAttentionLocal(dim, num_heads=num_heads, bias=qkv_bias, attn_drop=attn_drop, **kwargs)
-        self.attn3 = MaskedAttentionLocal(dim, num_heads=num_heads, bias=qkv_bias, attn_drop=attn_drop, **kwargs)
         self.drop_path = nn.Identity()
         self.use_ffn = kwargs.get('use_ffn', True)
         self.reconf = kwargs.get('reconf', False)
@@ -634,6 +634,7 @@ class MaskedTransformerBlock(nn.Module):
             self.mlp2 = FFN(dim, int(dim * mlp_ratio), dropout=dropout)
             self.norm4 = nn.LayerNorm(dim)
         if self.cross_attn:
+            self.attn3 = MaskedAttentionLocal(dim, num_heads=num_heads, bias=qkv_bias, attn_drop=attn_drop, **kwargs)
             self.norm5 = nn.LayerNorm(dim)
             self.norm6 = nn.LayerNorm(dim)
     def forward(self, x_cls, x_reg, locs,**kwargs):
@@ -695,6 +696,7 @@ class MaskedAttentionLocal(nn.Module):
     def forward(self, x_q, x_k, x_v, locs, **kwargs):
         B, N, C = x_q.shape
         L,G,P = kwargs.get('lframe'),kwargs.get('gframe'),kwargs.get('afternum')
+        stride = kwargs.get('stride')
 
         assert B == 1 , 'only support video batch size 1 currently'
         if locs!=None:
@@ -704,9 +706,9 @@ class MaskedAttentionLocal(nn.Module):
         if self.use_loc_emb and not self.pure_pos_emb:
             loc_emd = get_position_embedding(locs,locs,feat_dim=self.loc_emd_dim).type_as(x_q) #1, 64, N, N
             if self.use_time_emd:
-                time_emd = get_timing_signal_1d(torch.arange(0,LF), self.locf_dim).type_as(x_q) #LF, 64
+                time_emd = get_timing_signal_1d(torch.arange(0,LF*stride,stride), self.locf_dim).type_as(x_q) #LF, 64
                 time_emd = time_emd.unsqueeze(1).repeat(P, N, 1).permute(2, 0, 1).unsqueeze(0) #1, 64, N, N
-                loc_time_emb = loc_emd + time_emd
+                loc_time_emb = loc_emd + time_emd # do we want to add here?
             else:
                 loc_time_emb = loc_emd
             attn_lt = self.locAct(self.loc2feature(loc_time_emb))
@@ -760,6 +762,7 @@ class MaskedAttentionLocal(nn.Module):
         attn = attn + mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
+        attn = torch.nan_to_num(attn, nan=0.0)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
 

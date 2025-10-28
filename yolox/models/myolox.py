@@ -16,13 +16,13 @@ class YOLOX(nn.Module):
         self.backbone = backbone
         self.head = head
 
-    def forward(self, x, targets=None,nms_thresh=0.5,lframe=0,gframe=32):
+    def forward(self, x, targets=None,nms_thresh=0.5,lframe=0,gframe=32,stride=1):
         # fpn output content features of [dark3, dark4, dark5]
         fpn_outs = self.backbone(x)
         if self.training:
             assert targets is not None
             loss, iou_loss, conf_loss, cls_loss, l1_loss, rconf_loss,num_fg = self.head(
-                fpn_outs, targets, x, lframe=lframe,gframe=gframe
+                fpn_outs, targets, x, lframe=lframe,gframe=gframe,stride=stride
             )
             outputs = {
                 "total_loss": loss,
@@ -35,6 +35,6 @@ class YOLOX(nn.Module):
             }
         else:
 
-            outputs = self.head(fpn_outs,targets,x,nms_thresh=nms_thresh, lframe=lframe,gframe=gframe)
+            outputs = self.head(fpn_outs,targets,x,nms_thresh=nms_thresh, lframe=lframe,gframe=gframe,stride=stride)
 
         return outputs

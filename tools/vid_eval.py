@@ -98,8 +98,8 @@ def make_parser():
         nargs=argparse.REMAINDER,
     )
 
-    parser.add_argument('--lframe', default=0,type=int, help='local frame num')
-    parser.add_argument('--gframe', default=32,type=int, help='global frame num')
+    parser.add_argument('--lframe',type=int, help='local frame num')
+    parser.add_argument('--gframe',type=int, help='global frame num')
     parser.add_argument('--mode', default='random', help='frame sample mode')
     parser.add_argument('--tnum', default=-1, help='vid test sequences')
     parser.add_argument('--formal', default=False, action="store_true",help='vid test sequences')
@@ -123,8 +123,8 @@ def main(exp, args):
     configure_nccl()
     configure_omp()
     cudnn.benchmark = True
-    lframe = int(args.lframe)
-    gframe = int(args.gframe)
+    lframe = int(args.lframe) if args.lframe != None else exp.lframe_val
+    gframe = int(args.gframe) if args.gframe != None else exp.gframe_val
 
     dataset_val = vid.VIDDataset(file_path=exp.vid_val_path, #'./yolox/data/datasets/val_seq.npy',
                                  img_size=(args.tsize, args.tsize), preproc=Vid_Val_Transform(), lframe=lframe,
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     args = make_parser().parse_args()
 
     exp = get_exp(args.exp_file, args.name)
-    exp.test_size = (args.tsize, args.tsize)
+    exp.test_size = (args.tsize, args.tsize) if exp.test_size is None else exp.test_size
 
 
     if args.lframe != None: exp.lframe_val = int(args.lframe)

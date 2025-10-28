@@ -208,6 +208,14 @@ class Exp(BaseExp):
         # nms threshold
         self.nmsthre = 0.5
 
+        # ---------------- class name config ---------------- #
+        # Dictionary mapping class index to class name for evaluation display
+        # If None, uses default ImageNet VID class names
+        self.class_names = None
+        # Dictionary mapping XML class name to class index for annotation parsing
+        # If None, uses default ImageNet VID mapping
+        self.class_id_map = None
+
     def get_model(self):
         # rewrite get model func from yolox
         if self.backbone_name == 'MCSP':
@@ -322,43 +330,80 @@ class Exp(BaseExp):
     def get_data_loader(
             self, batch_size, is_distributed, no_aug=False, cache_img=False
     ):
-        from yolox.data import TrainTransform
+        from yolox.data import TrainTransform, BatchedTrainTransform
         from yolox.data.datasets.mosaicdetection import MosaicDetection_VID
-        assert batch_size == self.lframe + self.gframe
-        dataset = vid.VIDDataset(file_path=self.vid_train_path,
-                                 img_size=self.input_size,
-                                 preproc=TrainTransform(
-                                     max_labels=50,
-                                     flip_prob=self.flip_prob,
-                                     hsv_prob=self.hsv_prob),
-                                 lframe=self.lframe,  # batch_size,
-                                 gframe=self.gframe,
-                                 dataset_pth=self.data_dir,
-                                 local_stride=self.local_stride,
-                                 )
-        if self.use_aug:
-            # NO strong aug by defualt
-            dataset = MosaicDetection_VID(
-                dataset,
-                mosaic=False,
+        from torch.utils.data import DataLoader
+
+        if self.pred_mode:
+            # Use OnePerBatchDataset for predict-next-frame mode
+            assert batch_size == self.lframe
+            dataset = vid.OnePerBatchDataset(
+                file_path=self.vid_train_path,
                 img_size=self.input_size,
-                preproc=TrainTransform(
+                preproc=BatchedTrainTransform(
                     max_labels=120,
                     flip_prob=self.flip_prob,
                     hsv_prob=self.hsv_prob),
-                degrees=self.degrees,
-                translate=self.translate,
-                mosaic_scale=self.mosaic_scale,
-                mixup_scale=self.mixup_scale,
-                shear=self.shear,
-                perspective=self.perspective,
-                enable_mixup=self.enable_mixup,
-                mosaic_prob=self.mosaic_prob,
-                mixup_prob=self.mixup_prob,
-                dataset_path=self.data_dir
+                lframe=self.lframe,
+                gframe=0,
+                val=False,
+                dataset_pth=self.data_dir,
+                local_stride=self.local_stride,
+                class_id_map=self.class_id_map,
             )
-        dataset = vid.get_trans_loader(batch_size=batch_size, data_num_workers=4, dataset=dataset)
-        return dataset
+            # Create dataloader with OnePerBatchSampler
+            sampler = vid.OnePerBatchSampler(
+                file_path=self.vid_train_path,
+                batch_size=batch_size,
+                shuffle=True
+            )
+            dataloader = DataLoader(
+                dataset,
+                batch_size=1,  # Sampler returns one index, dataset returns full batch
+                sampler=sampler,
+                num_workers=4,
+                pin_memory=True,
+                collate_fn=vid.opb_collate_fn
+            )
+            return dataloader
+        else:
+            # Original VIDDataset for standard training
+            assert batch_size == self.lframe + self.gframe
+            dataset = vid.VIDDataset(file_path=self.vid_train_path,
+                                     img_size=self.input_size,
+                                     preproc=TrainTransform(
+                                         max_labels=50,
+                                         flip_prob=self.flip_prob,
+                                         hsv_prob=self.hsv_prob),
+                                     lframe=self.lframe,  # batch_size,
+                                     gframe=self.gframe,
+                                     dataset_pth=self.data_dir,
+                                     local_stride=self.local_stride,
+                                     class_id_map=self.class_id_map,
+                                     )
+            if self.use_aug:
+                # NO strong aug by defualt
+                dataset = MosaicDetection_VID(
+                    dataset,
+                    mosaic=False,
+                    img_size=self.input_size,
+                    preproc=TrainTransform(
+                        max_labels=120,
+                        flip_prob=self.flip_prob,
+                        hsv_prob=self.hsv_prob),
+                    degrees=self.degrees,
+                    translate=self.translate,
+                    mosaic_scale=self.mosaic_scale,
+                    mixup_scale=self.mixup_scale,
+                    shear=self.shear,
+                    perspective=self.perspective,
+                    enable_mixup=self.enable_mixup,
+                    mosaic_prob=self.mosaic_prob,
+                    mixup_prob=self.mixup_prob,
+                    dataset_path=self.data_dir
+                )
+            dataset = vid.get_trans_loader(batch_size=batch_size, data_num_workers=4, dataset=dataset)
+            return dataset
 
     def random_resize(self, data_loader, epoch, rank, is_distributed):
         tensor = torch.LongTensor(2).cuda()
@@ -436,18 +481,59 @@ class Exp(BaseExp):
         return scheduler
 
     def get_eval_loader(self, batch_size, tnum=None, data_num_workers=8,formal=False):
+        from torch.utils.data import DataLoader
+        from yolox.data import BatchedTrainTransform
+
         if tnum == None:
             tnum = self.tnum
-        assert batch_size == self.lframe_val+self.gframe_val
-        dataset_val = vid.VIDDataset(file_path=self.vid_val_path,
-                                     img_size=self.test_size, preproc=Vid_Val_Transform(), lframe=self.lframe_val,
-                                     gframe=self.gframe_val, val=True, dataset_pth=self.data_dir, tnum=tnum,formal=formal,
-                                     traj_linking=self.traj_linking, local_stride=self.local_stride,)
-        val_loader = vid.vid_val_loader(batch_size=batch_size,
-                                        data_num_workers=data_num_workers,
-                                        dataset=dataset_val, )
 
-        return val_loader
+        if self.pred_mode:
+            # Use OnePerBatchDataset for predict-next-frame mode validation
+            assert batch_size == self.lframe_val  # In pred_mode, only lframe is used
+            dataset_val = vid.OnePerBatchDataset(
+                file_path=self.vid_val_path,
+                img_size=self.test_size,
+                preproc=BatchedTrainTransform(
+                    max_labels=120,
+                    flip_prob=0,
+                    hsv_prob=0
+                ),
+                lframe=self.lframe_val,
+                gframe=0,  # No global frames in pred_mode
+                val=True,
+                dataset_pth=self.data_dir,
+                tnum=tnum,
+                formal=formal,
+                local_stride=1,  # Always use stride=1 in validation
+                class_id_map=self.class_id_map,
+            )
+            # Create dataloader with OnePerBatchSampler_Val (overlapping batches)
+            sampler = vid.OnePerBatchSampler_Val(
+                file_path=self.vid_val_path,
+                batch_size=batch_size
+            )
+            val_loader = DataLoader(
+                dataset_val,
+                batch_size=1,  # Sampler returns one index, dataset returns full batch
+                sampler=sampler,
+                num_workers=data_num_workers,
+                pin_memory=True,
+                collate_fn=vid.opb_collate_fn
+            )
+            return val_loader
+        else:
+            # Original VIDDataset for standard validation
+            assert batch_size == self.lframe_val+self.gframe_val
+            dataset_val = vid.VIDDataset(file_path=self.vid_val_path,
+                                         img_size=self.test_size, preproc=Vid_Val_Transform(), lframe=self.lframe_val,
+                                         gframe=self.gframe_val, val=True, dataset_pth=self.data_dir, tnum=tnum,formal=formal,
+                                         traj_linking=self.traj_linking, local_stride=self.local_stride,
+                                         class_id_map=self.class_id_map,)
+            val_loader = vid.vid_val_loader(batch_size=batch_size,
+                                            data_num_workers=data_num_workers,
+                                            dataset=dataset_val, )
+
+            return val_loader
 
     # rewrite evaluation func
     def get_evaluator(self, val_loader):
@@ -463,6 +549,7 @@ class Exp(BaseExp):
             lframe=self.lframe_val,
             gframe=self.gframe_val,
             first_only = False,
+            class_names=self.class_names,
         )
         return evaluator
 

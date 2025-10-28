@@ -47,7 +47,7 @@ class VIDEvaluator:
     def __init__(
             self, dataloader, img_size, confthre, nmsthre,
             num_classes, testdev=False, gl_mode=False,
-            lframe=0, gframe=32,**kwargs
+            lframe=0, gframe=32, class_names=None, **kwargs
     ):
         """
         Args:
@@ -57,6 +57,8 @@ class VIDEvaluator:
             confthre (float): confidence threshold ranging from 0 to 1, which
                 is defined in the config file.
             nmsthre (float): IoU threshold of non-max supression ranging from 0 to 1.
+            class_names (dict, optional): Dictionary mapping class index to class name.
+                If None, uses default ImageNet VID class names.
         """
         self.dataloader = dataloader
         self.img_size = img_size
@@ -71,41 +73,23 @@ class VIDEvaluator:
         self.lframe = lframe
         self.gframe = gframe
         self.kwargs = kwargs
+        # Use custom class_names if provided, otherwise use default ImageNet VID names
+        if class_names is not None:
+            self._class_names = class_names
+        else:
+            # Default to ImageNet VID classes
+            self._class_names = {i: name for i, name in enumerate(vid_classes)}
+
+        # Generate categories list from class_names
+        categories = [{"supercategorie": "", "id": idx, "name": name}
+                      for idx, name in sorted(self._class_names.items())]
+
         self.vid_to_coco = {
             'info': {
                 'description': 'nothing',
             },
             'annotations': [],
-            'categories': [{"supercategorie": "", "id": 0, "name": "airplane"},
-                           {"supercategorie": "", "id": 1, "name": "antelope"},
-                           {"supercategorie": "", "id": 2, "name": "bear"},
-                           {"supercategorie": "", "id": 3, "name": "bicycle"},
-                           {"supercategorie": "", "id": 4, "name": "bird"},
-                           {"supercategorie": "", "id": 5, "name": "bus"},
-                           {"supercategorie": "", "id": 6, "name": "car"},
-                           {"supercategorie": "", "id": 7, "name": "cattle"},
-                           {"supercategorie": "", "id": 8, "name": "dog"},
-                           {"supercategorie": "", "id": 9, "name": "domestic_cat"},
-                           {"supercategorie": "", "id": 10, "name": "elephant"},
-                           {"supercategorie": "", "id": 11, "name": "fox"},
-                           {"supercategorie": "", "id": 12, "name": "giant_panda"},
-                           {"supercategorie": "", "id": 13, "name": "hamster"},
-                           {"supercategorie": "", "id": 14, "name": "horse"},
-                           {"supercategorie": "", "id": 15, "name": "lion"},
-                           {"supercategorie": "", "id": 16, "name": "lizard"},
-                           {"supercategorie": "", "id": 17, "name": "monkey"},
-                           {"supercategorie": "", "id": 18, "name": "motorcycle"},
-                           {"supercategorie": "", "id": 19, "name": "rabbit"},
-                           {"supercategorie": "", "id": 20, "name": "red_panda"},
-                           {"supercategorie": "", "id": 21, "name": "sheep"},
-                           {"supercategorie": "", "id": 22, "name": "snake"},
-                           {"supercategorie": "", "id": 23, "name": "squirrel"},
-                           {"supercategorie": "", "id": 24, "name": "tiger"},
-                           {"supercategorie": "", "id": 25, "name": "train"},
-                           {"supercategorie": "", "id": 26, "name": "turtle"},
-                           {"supercategorie": "", "id": 27, "name": "watercraft"},
-                           {"supercategorie": "", "id": 28, "name": "whale"},
-                           {"supercategorie": "", "id": 29, "name": "zebra"}],
+            'categories': categories,
             'images': [],
             'licenses': []
         }
@@ -114,36 +98,7 @@ class VIDEvaluator:
                 'description': 'nothing',
             },
             'annotations': [],
-            'categories': [{"supercategorie": "", "id": 0, "name": "airplane"},
-                           {"supercategorie": "", "id": 1, "name": "antelope"},
-                           {"supercategorie": "", "id": 2, "name": "bear"},
-                           {"supercategorie": "", "id": 3, "name": "bicycle"},
-                           {"supercategorie": "", "id": 4, "name": "bird"},
-                           {"supercategorie": "", "id": 5, "name": "bus"},
-                           {"supercategorie": "", "id": 6, "name": "car"},
-                           {"supercategorie": "", "id": 7, "name": "cattle"},
-                           {"supercategorie": "", "id": 8, "name": "dog"},
-                           {"supercategorie": "", "id": 9, "name": "domestic_cat"},
-                           {"supercategorie": "", "id": 10, "name": "elephant"},
-                           {"supercategorie": "", "id": 11, "name": "fox"},
-                           {"supercategorie": "", "id": 12, "name": "giant_panda"},
-                           {"supercategorie": "", "id": 13, "name": "hamster"},
-                           {"supercategorie": "", "id": 14, "name": "horse"},
-                           {"supercategorie": "", "id": 15, "name": "lion"},
-                           {"supercategorie": "", "id": 16, "name": "lizard"},
-                           {"supercategorie": "", "id": 17, "name": "monkey"},
-                           {"supercategorie": "", "id": 18, "name": "motorcycle"},
-                           {"supercategorie": "", "id": 19, "name": "rabbit"},
-                           {"supercategorie": "", "id": 20, "name": "red_panda"},
-                           {"supercategorie": "", "id": 21, "name": "sheep"},
-                           {"supercategorie": "", "id": 22, "name": "snake"},
-                           {"supercategorie": "", "id": 23, "name": "squirrel"},
-                           {"supercategorie": "", "id": 24, "name": "tiger"},
-                           {"supercategorie": "", "id": 25, "name": "train"},
-                           {"supercategorie": "", "id": 26, "name": "turtle"},
-                           {"supercategorie": "", "id": 27, "name": "watercraft"},
-                           {"supercategorie": "", "id": 28, "name": "whale"},
-                           {"supercategorie": "", "id": 29, "name": "zebra"}],
+            'categories': categories,
             'images': [],
             'licenses': []
         }

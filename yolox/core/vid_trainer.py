@@ -142,7 +142,7 @@ class Trainer:
     def train_one_iter(self):
         iter_start_time = time.time()
 
-        inps, targets,paths,_ = self.prefetcher.next()
+        inps, targets,paths,stride = self.prefetcher.next()
         inps = inps.to(self.data_type)
         targets = targets.to(self.data_type)
         targets.requires_grad = False
@@ -156,7 +156,7 @@ class Trainer:
         data_end_time = time.time()
 
         with torch.cuda.amp.autocast(enabled=self.amp_training):
-            outputs = self.model(inps, targets, lframe = self.exp.lframe,gframe = self.exp.gframe)
+            outputs = self.model(inps, targets, lframe = self.exp.lframe,gframe = self.exp.gframe,stride=stride)
 
         loss = outputs["total_loss"]
         self.tblogger.add_scalar("train/loss", loss, self.iter + 1)

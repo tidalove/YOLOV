@@ -16,7 +16,7 @@ filterpy
 h5py
 scikit-learn
 ultralytics
-
+kornia
 
 # verified versions
 pycocotools>=2.0.2
