@@ -375,8 +375,7 @@ class YOLOXHead(nn.Module):
             conf_output = torch.reshape(conf_output, [-1, self.Afternum])
         else:
             conf_output = None
-
-
+        
         if self.training:
             if self.both_mode:
                 labels = labels[:lframe]
@@ -401,7 +400,7 @@ class YOLOXHead(nn.Module):
                                              conf_output = conf_output,
                                              nms_thre=nms_thresh,
                                              )
-            return result, result_ori  # result
+            return result, result_ori, (outputs_decode, fc_output, conf_output)  # result
 
     def get_output_and_grid(self, output, k, stride, dtype):
         grid = self.grids[k]

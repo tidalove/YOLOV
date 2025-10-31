@@ -2,7 +2,7 @@
 # -*- coding:utf-8 -*-
 # Copyright (c) Megvii, Inc. and its affiliates.
 
-from .data_augment import TrainTransform, ValTransform, BatchedTrainTransform
+from .data_augment import TrainTransform, ValTransform, BatchedTrainTransform, BatchedValTransform
 from .data_prefetcher import DataPrefetcher,DataPrefetcherBase
 from .dataloading import DataLoader, get_yolox_datadir, worker_init_reset_seed
 from .datasets import *

@@ -409,6 +409,73 @@ class BatchedTrainTransform:
         return images_out, processed_targets
 
 
+class BatchedValTransform:
+    """
+    Validation transform for batches of images with no augmentation.
+    Outputs labels in xyxy format to match evaluator expectations.
+    Designed for use with OnePerBatchDataset during validation.
+
+    Args:
+        images: (batch_size, H, W, C) stacked numpy array
+        targets_list: list of (N_i, 5) arrays where each is [x1, y1, x2, y2, class_id]
+        input_dim: tuple (H_out, W_out) target size
+
+    Returns:
+        images: (batch_size, C, H_out, W_out) preprocessed numpy array
+        targets_list: list of (max_labels, 5) padded arrays in [class_id, x1, y1, x2, y2] format (xyxy)
+    """
+    def __init__(self, max_labels=120, swap=(2, 0, 1), legacy=False):
+        self.max_labels = max_labels
+        self.swap = swap
+        self.legacy = legacy
+
+    def __call__(self, images, targets_list, input_dim):
+        """
+        Apply preprocessing to batch of images without augmentation.
+        Keeps boxes in xyxy format for evaluator compatibility.
+        """
+        batch_size = images.shape[0]
+
+        processed_images = []
+        processed_targets = []
+
+        for i in range(batch_size):
+            img = images[i]  # (H, W, C)
+            target = targets_list[i].copy()  # (N_i, 5) in [x1, y1, x2, y2, class_id]
+
+            # Preprocess (resize + pad)
+            img, r_ = preproc(img, input_dim, swap=self.swap)
+
+            if self.legacy:
+                img = img[::-1, :, :].copy()
+                img /= 255.0
+                img -= np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
+                img /= np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
+
+            # Extract boxes and labels
+            boxes = target[:, :4].copy()  # [x1, y1, x2, y2]
+            labels = target[:, 4].copy()  # [class_id]
+
+            # Scale boxes by resize ratio (keep in xyxy format!)
+            boxes *= r_
+
+            # Create padded target array [class_id, x1, y1, x2, y2]
+            labels_t = np.expand_dims(labels, 1)
+            targets_t = np.hstack((labels_t, boxes))
+            padded = np.zeros((self.max_labels, 5), dtype=np.float32)
+            padded[:min(len(targets_t), self.max_labels)] = targets_t[:self.max_labels]
+            padded = np.ascontiguousarray(padded, dtype=np.float32)
+
+            processed_images.append(img)
+            processed_targets.append(padded)
+
+        # Stack images: (batch_size, C, H, W)
+        images_out = np.stack(processed_images)
+
+        # Return list of targets for compatibility with opb_collate_fn
+        return images_out, processed_targets
+
+
 class TrainTransform:
     def __init__(self, max_labels=50, flip_prob=0.5, hsv_prob=1.0):
         self.max_labels = max_labels

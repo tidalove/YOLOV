@@ -293,6 +293,9 @@ class Exp(BaseExp):
                      'reconf':self.reconf,'ota_mode':self.ota_mode,'ota_cls':self.ota_cls,'traj_linking':self.traj_linking,
                      'iou_window':self.iou_window,'globalBlocks':self.globalBlocks,'minimal_limit':self.minimal_limit,
                      'vid_cls':self.vid_cls,'vid_reg':self.vid_reg,'conf_sim_thresh':self.conf_sim_thresh,
+                     'disable_mask': getattr(self, 'disable_mask', False),  # Ablation: disable causal masking
+                     'shared_loc2feature': getattr(self, 'shared_loc2feature', False),  # Ablation: share loc2feature between attn1/attn2
+                     'small_qk_proj': getattr(self, 'small_qk_proj', False),  # Ablation: fix q,k projection size in LocalAggregation
                      }
         head = YOLOXHead(self.num_classes, self.width, in_channels=in_channels, heads=self.head, drop=self.drop_rate,
                          use_score=self.use_score, defualt_p=self.defualt_p, sim_thresh=self.sim_thresh,
@@ -482,7 +485,7 @@ class Exp(BaseExp):
 
     def get_eval_loader(self, batch_size, tnum=None, data_num_workers=8,formal=False):
         from torch.utils.data import DataLoader
-        from yolox.data import BatchedTrainTransform
+        from yolox.data import BatchedValTransform
 
         if tnum == None:
             tnum = self.tnum
@@ -493,10 +496,8 @@ class Exp(BaseExp):
             dataset_val = vid.OnePerBatchDataset(
                 file_path=self.vid_val_path,
                 img_size=self.test_size,
-                preproc=BatchedTrainTransform(
-                    max_labels=120,
-                    flip_prob=0,
-                    hsv_prob=0
+                preproc=BatchedValTransform(
+                    max_labels=120
                 ),
                 lframe=self.lframe_val,
                 gframe=0,  # No global frames in pred_mode
@@ -536,7 +537,7 @@ class Exp(BaseExp):
             return val_loader
 
     # rewrite evaluation func
-    def get_evaluator(self, val_loader):
+    def get_evaluator(self, val_loader, epoch=None, output_dir=None):
         from yolox.evaluators.vid_evaluator_v2 import VIDEvaluator
 
         # val_loader = self.get_eval_loader(batch_size, is_distributed, testdev, legacy)
@@ -550,6 +551,8 @@ class Exp(BaseExp):
             gframe=self.gframe_val,
             first_only = False,
             class_names=self.class_names,
+            epoch=epoch,
+            output_dir=output_dir,
         )
         return evaluator
 
@@ -559,5 +562,5 @@ class Exp(BaseExp):
         # NOTE: trainer shouldn't be an attribute of exp object
         return trainer
 
-    def eval(self, model, evaluator, is_distributed, half=False):
-        return evaluator.evaluate(model, is_distributed, half)
+    def eval(self, model, evaluator, is_distributed, half=False, epoch=None, output_dir=None):
+        return evaluator.evaluate(model, is_distributed, half, epoch=epoch, output_dir=output_dir)

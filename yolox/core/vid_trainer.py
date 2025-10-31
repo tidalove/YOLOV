@@ -159,7 +159,7 @@ class Trainer:
             outputs = self.model(inps, targets, lframe = self.exp.lframe,gframe = self.exp.gframe,stride=stride)
 
         loss = outputs["total_loss"]
-        self.tblogger.add_scalar("train/loss", loss, self.iter + 1)
+        self.tblogger.add_scalar("train/loss", loss, self.progress_in_iter + 1)
 
         self.optimizer.zero_grad()
         self.scaler.scale(loss).backward()
@@ -229,7 +229,9 @@ class Trainer:
 
 
         self.evaluator = self.exp.get_evaluator(
-            val_loader=self.val_loader
+            val_loader=self.val_loader,
+            epoch=None,
+            output_dir=self.file_name
         )
         # Tensorboard logger
         if self.rank == 0:
@@ -379,10 +381,13 @@ class Trainer:
             if is_parallel(evalmodel):
                 evalmodel = evalmodel.module
         self.evaluator = self.exp.get_evaluator(
-            val_loader=self.val_loader
+            val_loader=self.val_loader,
+            epoch=self.epoch,
+            output_dir=self.file_name
         )
         summary = self.exp.eval(
-            evalmodel, self.evaluator, self.is_distributed,self.args.fp16
+            evalmodel, self.evaluator, self.is_distributed,self.args.fp16,
+            epoch=self.epoch, output_dir=self.file_name
         )
         self.model.train()
 
@@ -420,10 +425,13 @@ class Trainer:
         evalmodel = self.model
         evalmodel.eval()
         self.evaluator = self.exp.get_evaluator(
-            val_loader=self.val_loader
+            val_loader=self.val_loader,
+            epoch=None,
+            output_dir=self.file_name
         )
         summary = self.exp.eval(
-            evalmodel, self.evaluator, self.is_distributed, self.amp_training
+            evalmodel, self.evaluator, self.is_distributed, self.amp_training,
+            epoch=None, output_dir=self.file_name
         )
         self.model.train()
         if self.rank == 0:
